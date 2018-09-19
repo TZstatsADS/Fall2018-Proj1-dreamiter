@@ -43,8 +43,6 @@ library(syuzhet)
 library(ggplot2)
 library(topicmodels)
 
-# Function
-source("../lib/wordcloud_group.R")
 ```
 
 ### Step 1 - Data Import & Preparation
@@ -368,9 +366,12 @@ heatmap.2(as.matrix(topic.summary4[,-1]), Rowv = FALSE,
 #### Step 5 - Summary
 
 (1) Few NLP methods were used throughout my project, including sentiment analysis and topic modeling. And several analytics/visualization tools were used, including boxplot, wordcloud, and heatmap.
+
 (2) I first examined the relationship between predicted_cateory (given in the dataset) vs. other parameters. The main takeaways are:
-  - For both male and female, most frequent words are both "friend", "day" and "time".
-  - However, the difference is that for 24h data, words that tend to be memorized in a short term are   also very hot, such as "watched", "morning", "dinner"; while for 3m data, words that represent more significant events tend to show up more, such as "job", "home", and "birthday".
+-For both male and female, most frequent words are both "friend", "day" and "time".
+-However, the difference is that for 24h data, words that tend to be memorized in a short term are   also very hot, such as "watched", "morning", "dinner"; while for 3m data, words that represent more significant events tend to show up more, such as "job", "home", and "birthday".
+
 (3) Sentiment value was also utilized to determine if different demographic groups behave differently. But the result shows that the difference (among gender, marital status, or age) is quite minor.
+
 (4) By using LDA method, a list of 10 topics was manually entered. This heatmap on reflection_period prefectly illustrates the difference between the two groups. For short-term happy memories, people tend to say things about "pets", "entertainment", "celebration", and "exercise"; while for long-term happy memories, people often mentions things like their "people", "work", or "school".
   
