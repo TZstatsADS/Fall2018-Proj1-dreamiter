@@ -1,7 +1,8 @@
 ---
 title: "Project 1"
-author: "Yiding Xie    UNI: yx2443"
+author: 'Yiding Xie    UNI: yx2443'
 output:
+  pdf_document: default
   html_document:
     df_print: paged
 ---
