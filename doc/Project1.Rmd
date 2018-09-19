@@ -1,4 +1,4 @@
- ---
+---
 title: "Project 1"
 author: "Yiding Xie    UNI: yx2443"
 output:
@@ -10,20 +10,23 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-HappyDB is a corpus of 100,000 crowd-sourced happy moments via Amazon's Mechanical Turk. You can read more about it on https://arxiv.org/abs/1801.07746
-
-In this R notebook, we process the raw textual data for our data analysis.
+HappyDB is a corpus of 100,000 crowd-sourced happy moments via Amazon's Mechanical Turk. The goal of my project is to look deeper into the datasets and to draw any insights on the causes that make us happy. Several Natural language processing and text mining techniques (such as ) are used in my project to derive interesting findings in this collection of happy moments.
 
 ### Step 0 - Load all the required libraries
 
-From the packages' descriptions:
-
-+ `tm` is a framework for text mining applications within R;
-+ `tidyverse` is an opinionated collection of R packages designed for data science. All packages share an underlying design philosophy, grammar, and data structures;
-+ `tidytext` allows text mining using 'dplyr', 'ggplot2', and other tidy tools;
-+ `DT` provides an R interface to the JavaScript library DataTables.
-
 ```{r load libraries, warning=FALSE, message=FALSE}
+packages.used=c("plyr","tm","tidytext","tidyverse","DT","wordcloud","scales","wordcloud2",
+                "ngram","sentimentr","dplyr","qdap","syuzhet","ggplot2","topicmodels")
+
+# check packages that need to be installed.
+packages.needed=setdiff(packages.used, 
+                        intersect(installed.packages()[,1], 
+                                  packages.used))
+# install additional packages
+if(length(packages.needed)>0){
+  install.packages(packages.needed, dependencies = TRUE)
+}
+
 library(tm)
 library(tidytext)
 library(tidyverse)
@@ -31,122 +34,23 @@ library(DT)
 library(wordcloud)
 library(scales)
 library(wordcloud2)
-library(gridExtra)
 library(ngram)
+library(sentimentr)
+library(dplyr)
+library(qdap)
+library(syuzhet)
+library(ggplot2)
+library(topicmodels)
+
+# Function
+source("../lib/wordcloud_group.R")
 ```
 
-### Step 1 - Load the data to be cleaned and processed
+### Step 1 - Data Import & Preparation
 
-```{r read data, warning=FALSE, message=FALSE}
-urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/cleaned_hm.csv'
-hm_data <- read_csv(urlfile)
-```
+#### Step 1.1 - Load the processed text data along with demographic information on contributors
 
-### Step 2 - Preliminary cleaning of text
-
-We clean the text by converting all the letters to the lower case, and removing punctuation, numbers, empty words and extra white space.
-
-```{r text processing in tm}
-corpus <- VCorpus(VectorSource(hm_data$cleaned_hm))%>%
-  tm_map(content_transformer(tolower))%>%
-  tm_map(removePunctuation)%>%
-  tm_map(removeNumbers)%>%
-  tm_map(removeWords, character(0))%>%
-  tm_map(stripWhitespace)
-```
-
-### Step 3 - Stemming words and converting tm object to tidy object
-
-Stemming reduces a word to its word *stem*. We stem the words here and then convert the "tm" object to a "tidy" object for much faster processing.
-
-```{r stemming}
-stemmed <- tm_map(corpus, stemDocument) %>%
-  tidy() %>%
-  select(text)
-```
-
-### Step 4 - Creating tidy format of the dictionary to be used for completing stems
-
-We also need a dictionary to look up the words corresponding to the stems.
-
-```{r tidy dictionary}
-dict <- tidy(corpus) %>%
-  select(text) %>%
-  unnest_tokens(dictionary, text)
-```
-
-### Step 5 - Removing stopwords that don't hold any significant information for our data set
-
-We remove stopwords provided by the "tidytext" package and also add custom stopwords in context of our data.
-
-```{r stopwords}
-data("stop_words")
-
-word <- c("happy","ago","yesterday","lot","today","months","month",
-                 "happier","happiest","last","week","past")
-
-stop_words <- stop_words %>%
-  bind_rows(mutate(tibble(word), lexicon = "updated"))
-```
-
-### Step 6 - Combining stems and dictionary into the same tibble
-
-Here we combine the stems and the dictionary into the same "tidy" object.
-
-```{r tidy stems with dictionary}
-completed <- stemmed %>%
-  mutate(id = row_number()) %>%
-  unnest_tokens(stems, text) %>%
-  bind_cols(dict) %>%
-  anti_join(stop_words, by = c("dictionary" = "word"))
-```
-
-### Step 7 - Stem completion
-
-Lastly, we complete the stems by picking the corresponding word with the highest frequency.
-
-```{r stem completion, warning=FALSE, message=FALSE}
-completed <- completed %>%
-  group_by(stems) %>%
-  count(dictionary) %>%
-  mutate(word = dictionary[which.max(n)]) %>%
-  ungroup() %>%
-  select(stems, word) %>%
-  distinct() %>%
-  right_join(completed) %>%
-  select(-stems)
-```
-
-### Step 8 - Pasting stem completed individual words into their respective happy moments
-
-We want our processed words to resemble the structure of the original happy moments. So we paste the words together to form happy moments.
-
-```{r reverse unnest}
-completed <- completed %>%
-  group_by(id) %>%
-  summarise(text = str_c(word, collapse = " ")) %>%
-  ungroup()
-```
-
-### Step 9 - Keeping a track of the happy moments with their own ID
-
-```{r cleaned hm_data, warning=FALSE, message=FALSE}
-hm_data <- hm_data %>%
-  mutate(id = row_number()) %>%
-  inner_join(completed)
-```
-
-### Exporting the processed text data into a CSV file
-
-```{r export data}
-write_csv(hm_data, "../output/processed_moments.csv")
-```
-
-The final processed data is ready to be used for any kind of analysis.
-
-### Step 10 - Load the processed text data along with demographic information on contributors
-
-We use the processed data for our analysis and combine it with the demographic information available.
+We use the processed data (cleaned and with all stop words removed) for our analysis and combine it with the demographic information available.
 
 ```{r load data, warning=FALSE, message=FALSE}
 hm_data <- read_csv("../output/processed_moments.csv")
@@ -155,15 +59,17 @@ urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/da
 demo_data <- read_csv(urlfile)
 ```
 
-### Combine both the data sets and keep the required columns for analysis
+#### Step 1.2 - Combine both the data sets and keep the required columns for analysis
 
-We select a subset of the data that satisfies specific row conditions.
+We select a subset of the data that satisfies my project need.
 
 ```{r combining data, warning=FALSE, message=FALSE}
 hm_data <- hm_data %>%
   inner_join(demo_data, by = "wid") %>%
   select(wid,
          original_hm,
+         baseform_hm,
+         num_sentence,
          gender, 
          marital, 
          parenthood,
@@ -171,25 +77,202 @@ hm_data <- hm_data %>%
          age, 
          country, 
          ground_truth_category, 
+         predicted_category,
          text) %>%
   mutate(count = sapply(hm_data$text, wordcount))
 ```
 
-```{r}
-datatable(hm_data)
-```
-### Create a bag of words using the text data
+#### Step 1.3 - Bag of Words
+
+Create a bag of words using the text data, generate word_count datasets (grouped by predicted_category, gender, marital status, and reflection_period separately), and then sort each word_count sets
 
 ```{r bag of words, warning=FALSE, message=FALSE}
 bag_of_words <-  hm_data %>%
   unnest_tokens(word, text)
 
-word_count <- bag_of_words %>%
+word_count <- bag_of_words %>% 
+  count(word, sort = TRUE)
+
+word_count_by_category <- bag_of_words %>%
+  group_by(predicted_category) %>%
+  count(word, sort = TRUE)
+
+word_count_by_gender <- bag_of_words %>%
+  group_by(gender) %>%
+  count(word, sort = TRUE)
+
+word_count_by_marital <- bag_of_words %>%
+  group_by(marital) %>%
+  count(word, sort = TRUE)
+
+word_count_by_reflection <- bag_of_words %>%
+  group_by(reflection_period) %>%
   count(word, sort = TRUE)
 ```
 
 
+### Step 2 - Word Cloud
+
+#### Step 2.1 - Word Cloud on the whole Dataset (cleaned words)
+
+We collected the top 100 words with most appearanaces in the entire dataset. From the graph, words like "friend", "time", "family", and "home" etc, tend to appear more frequently.
+
+```{r wordcloud1, warning=FALSE, message=FALSE}
+wordcloud(words = word_count$word, freq = word_count$n, min.freq = 1,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8,"Dark2"))
+```
+
+#### Step 2.2 - Word Cloud vs. Grouped Data
+
+Then I want to dig deeper into the dataset. By utilizing word cloud and bar charts, I am able to examine the following relations:
+  (1) Most frequent words vs Predicted_Category
+  (2) Most frequent words vs Gender
+  (3) Most frequent words vs Marital Status
+  (4) Most frequent words vs Reflection_Period
+
+(1) Most frequent words vs Predicted_Category:
+In the "achievement" category, words like "job" and "received" ranked top; while for "bonding" category, words like "friend" are the hottest, and for "nature" category, words like "weather" and "rain" appeared the most.
+
+(2) Most frequent words vs Gender
+For both male and female, most frequent words are both "friend", "day" and "time".
+
+(3) Most frequent words vs Marital Status
+The most obvious fact is that for people who are divorced or single, word "friend" tended to appear a lot more frequent than that for married people.
+
+(4) Most frequent words vs Reflection_Period
+For both 24h and 3m data, most frequent words are both "friend", "day" and "time". However, the difference is that for 24h data, words that tend to be memorized in a short term are also very hot, such as "watched", "morning", "dinner"; while for 3m data, words that represent more significant events tend to show up more, such as "job", "home", and "birthday".
+
+```{r wordcloud2, warning=FALSE, message=FALSE}
+library(plyr)
+
+# By Predicted Category
+
+ddply(word_count_by_category, .(predicted_category), wordcloud_group)
+
+word_count_by_category %>% 
+  slice(1:10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n, color = predicted_category)) + geom_col() +  facet_wrap(~predicted_category, scales = "free") + xlab(NULL) +
+      ylab("Word Frequency")+ coord_flip()
 
 
-#### My Work Starts Here
+# By Gender
+
+ddply(word_count_by_gender[!is.na(word_count_by_gender$gender),], .(gender), wordcloud_group)
+
+word_count_by_gender[!is.na(word_count_by_gender$gender),] %>% 
+  slice(1:10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n, color = gender)) + geom_col() +  facet_wrap(~gender, scales = "free") + xlab(NULL) + ylab("Word Frequency")+ coord_flip()
+
+
+# By Marital
+
+ddply(word_count_by_marital[!is.na(word_count_by_marital$marital),], .(marital), wordcloud_group)
+
+word_count_by_marital[!is.na(word_count_by_marital$marital),] %>% 
+  slice(1:10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n, color = marital)) + geom_col() +  facet_wrap(~marital, scales = "free") + xlab(NULL) + ylab("Word Frequency")+ coord_flip()
+
+
+# By Reflection Period
+
+ddply(word_count_by_reflection[!is.na(word_count_by_reflection$reflection_period),], .(reflection_period), wordcloud_group)
+
+word_count_by_reflection[!is.na(word_count_by_reflection$reflection_period),] %>% 
+  slice(1:10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n, color = reflection_period)) + geom_col() +  facet_wrap(~reflection_period, scales = "free") + xlab(NULL) + ylab("Word Frequency")+ coord_flip()
+
+```
+
+
+### Step 3 - Sentiment Value Analysis
+
+The term "sentiment value", is a numerical value that was created in the R package, “Syuzhet”. This value weighs the emotional intensity of text, and it is part of the sentiment analysis method.
+
+Then I want to dig deeper into the dataset. By utilizing boxplots, I am able to examine the following relations:
+  (1) Sentiment Value vs. Gender & Marital Status
+  (2) Sentiment Value vs. 10 Countries with the most word entries
+  (3) Sentiment Value vs. Age groups
+
+(1) Sentiment Value vs. Gender & Marital Status
+The mean and medians of the sentiment value do not vary much among the individual demographic groups. However, I do notice more extreme values for people who are either married or single. The other thing worth mentioning is that, most sentiment values are positive.
+
+(2) Sentiment Value vs. 10 Countries with the most word entries
+The 10 countries with the most word entires are: AUS, BRA, CAN, GBR, IND, MEX, PHL, USA, VEN, VNM.
+And IND and VEN seem to have sider IQRs compared to everyone else (Especially for USA: Quite narrow IQR, with over 78000 records). This probably means American people's sentiments are pretty consistent compared to other nations. I also notice IND and USA seem to have more extreme values, and this is probably due to the fact that they have collected a lot more data from IND and USA (both more than 10000 records), while most countries have less than 100.
+
+(3) Sentiment Value vs. Age groups
+The age groups are binned into an interval of 10. The sentiment value itself does not tell much story, but I saw some extreme outliers. For example, there are couple records who were submitted by people who are over 200 years old. Also, a vast majority of the data records were contributed by people who are in their 20s through 40s.
+
+```{r sentiment analysis, warning=FALSE, message=FALSE}
+hm_data$Sentiment.Value <- get_sentiment(hm_data$text)
+
+# Sentiment Value vs. Gender & Marital Status
+ggplot(hm_data[(!is.na(hm_data$gender))&(!is.na(hm_data$marital)),], aes(x = gender, y = Sentiment.Value, color = marital)) + geom_boxplot()
+
+# Sentiment Value vs. 10 Countries with the most word entries
+country.int <- tail(names(sort(table(hm_data$country))), 10)
+table(hm_data$country)
+ggplot(subset(hm_data, country %in% country.int), aes(x = country, y = Sentiment.Value, color = country)) + geom_boxplot()
+
+# Sentiment Value vs. Age groups
+hm_data$age <- as.integer(hm_data$age)
+x.interval <- seq(0,250,10)
+xx.interval <- seq(0,100,25)
+hm_data$age.interval <- findInterval(hm_data$age, x.interval)
+ggplot(hm_data[!is.na(hm_data$age),], aes(x = age.interval, y = Sentiment.Value, group = age.interval)) + geom_boxplot() + scale_x_continuous(labels = as.character(xx.interval), limits = c(0,10))
+
+```
+
+
+### Step 4 - Topic Modeling
+
+
+
+```{r topic1, warning=FALSE, message=FALSE}
+dtm <- VCorpus(VectorSource(hm_data$text)) %>% DocumentTermMatrix()
+rowTotals <- slam::row_sums(dtm)
+dtm <- dtm[rowTotals > 0, ]
+
+#Set parameters for Gibbs sampling
+burnin <- 800
+iter <- 400
+thin <- 100
+seed <-list(2003,5,63,100001,765)
+nstart <- 5
+best <- TRUE
+
+#Number of topics
+k <- 10
+
+#Run LDA using Gibbs sampling
+ldaOut <- LDA(dtm, k, method="Gibbs", control=list(nstart=nstart, 
+                                                 seed = seed, best=best,
+                                                 burnin = burnin, iter = iter, 
+                                                 thin=thin))
+#write out results
+#docs to topics
+ldaOut.topics <- as.matrix(topics(ldaOut))
+table(c(1:k, ldaOut.topics))
+
+#top 6 terms in each topic
+ldaOut.terms <- as.matrix(terms(ldaOut,20))
+
+#probabilities associated with each topic assignment
+topicProbabilities <- as.data.frame(ldaOut@gamma)
+
+terms.beta=ldaOut@beta
+terms.beta=scale(terms.beta)
+topics.terms=NULL
+for(i in 1:k){
+  topics.terms=rbind(topics.terms, ldaOut@terms[order(terms.beta[i,], decreasing = TRUE)[1:7]])
+}
+topics.terms
+ldaOut.terms
+```
+
 
