@@ -16,7 +16,7 @@ HappyDB is a corpus of 100,000 crowd-sourced happy moments via Amazon's Mechanic
 
 ```{r load libraries, warning=FALSE, message=FALSE}
 packages.used=c("plyr","tm","tidytext","tidyverse","DT","wordcloud","scales","wordcloud2",
-                "ngram","sentimentr","dplyr","qdap","syuzhet","ggplot2","topicmodels")
+                "gplots","sentimentr","ngram","dplyr","qdap","syuzhet","ggplot2","topicmodels")
 
 # check packages that need to be installed.
 packages.needed=setdiff(packages.used, 
@@ -34,8 +34,9 @@ library(DT)
 library(wordcloud)
 library(scales)
 library(wordcloud2)
-library(ngram)
+library(gplots)
 library(sentimentr)
+library(ngram)
 library(dplyr)
 library(qdap)
 library(syuzhet)
@@ -144,43 +145,26 @@ The most obvious fact is that for people who are divorced or single, word "frien
 For both 24h and 3m data, most frequent words are both "friend", "day" and "time". However, the difference is that for 24h data, words that tend to be memorized in a short term are also very hot, such as "watched", "morning", "dinner"; while for 3m data, words that represent more significant events tend to show up more, such as "job", "home", and "birthday".
 
 ```{r wordcloud2, warning=FALSE, message=FALSE}
-library(plyr)
-
 # By Predicted Category
-
-ddply(word_count_by_category, .(predicted_category), wordcloud_group)
-
 word_count_by_category %>% 
   slice(1:10) %>%
   mutate(word = reorder(word, n)) %>%
   ggplot(aes(x = word, y = n, color = predicted_category)) + geom_col() +  facet_wrap(~predicted_category, scales = "free") + xlab(NULL) +
       ylab("Word Frequency")+ coord_flip()
 
-
 # By Gender
-
-ddply(word_count_by_gender[!is.na(word_count_by_gender$gender),], .(gender), wordcloud_group)
-
 word_count_by_gender[!is.na(word_count_by_gender$gender),] %>% 
   slice(1:10) %>%
   mutate(word = reorder(word, n)) %>%
   ggplot(aes(x = word, y = n, color = gender)) + geom_col() +  facet_wrap(~gender, scales = "free") + xlab(NULL) + ylab("Word Frequency")+ coord_flip()
 
-
 # By Marital
-
-ddply(word_count_by_marital[!is.na(word_count_by_marital$marital),], .(marital), wordcloud_group)
-
 word_count_by_marital[!is.na(word_count_by_marital$marital),] %>% 
   slice(1:10) %>%
   mutate(word = reorder(word, n)) %>%
   ggplot(aes(x = word, y = n, color = marital)) + geom_col() +  facet_wrap(~marital, scales = "free") + xlab(NULL) + ylab("Word Frequency")+ coord_flip()
 
-
 # By Reflection Period
-
-ddply(word_count_by_reflection[!is.na(word_count_by_reflection$reflection_period),], .(reflection_period), wordcloud_group)
-
 word_count_by_reflection[!is.na(word_count_by_reflection$reflection_period),] %>% 
   slice(1:10) %>%
   mutate(word = reorder(word, n)) %>%
@@ -231,7 +215,9 @@ ggplot(hm_data[!is.na(hm_data$age),], aes(x = age.interval, y = Sentiment.Value,
 
 ### Step 4 - Topic Modeling
 
+#### Step 4.1 - LDA Method
 
+Here I used the topicmodels package written by Bettina Gruen and Kurt Hornik. Specifically, we’ll use the LDA function with the Gibbs sampling option mentioned in class. Also, since the LDA function has a fairly large number of parameters, I mainly stuck to the ones given in class/tutorial website, but I scaled down the number of burnin, iteration, and thins in order to speed up the sampling process.
 
 ```{r topic1, warning=FALSE, message=FALSE}
 dtm <- VCorpus(VectorSource(hm_data$text)) %>% DocumentTermMatrix()
@@ -255,12 +241,11 @@ ldaOut <- LDA(dtm, k, method="Gibbs", control=list(nstart=nstart,
                                                  burnin = burnin, iter = iter, 
                                                  thin=thin))
 #write out results
-#docs to topics
 ldaOut.topics <- as.matrix(topics(ldaOut))
-table(c(1:k, ldaOut.topics))
+table(c(1:k, ldaOut.topics))   # Total number per each topic
 
-#top 6 terms in each topic
-ldaOut.terms <- as.matrix(terms(ldaOut,20))
+#top 10 terms in each topic
+ldaOut.terms <- as.matrix(terms(ldaOut,10))
 
 #probabilities associated with each topic assignment
 topicProbabilities <- as.data.frame(ldaOut@gamma)
@@ -269,10 +254,123 @@ terms.beta=ldaOut@beta
 terms.beta=scale(terms.beta)
 topics.terms=NULL
 for(i in 1:k){
-  topics.terms=rbind(topics.terms, ldaOut@terms[order(terms.beta[i,], decreasing = TRUE)[1:7]])
+  topics.terms=rbind(topics.terms, ldaOut@terms[order(terms.beta[i,], decreasing = TRUE)[1:10]])
 }
-topics.terms
-ldaOut.terms
+
+ldaOut.terms   #top 10 terms in each topic
 ```
 
 
+#### Step 4.2 - Come up with 10 topics
+
+I set the topic numbers to be 10. I manually tag them as "Work", "Family","Vacation","Pets","People","Celebration","Social","Entertainment","School","Exercise". Because Topic 2 contains the key words: "Son", "Daughter", and "Brother", and Topic 10 contains "Walk", "Park", and "Run",etc.
+Based on the most popular terms and the most salient terms for each topic, we assign a hashtag to each topic.
+
+```{r topic assign, warning=FALSE, message=FALSE}
+topics.hash=c("Work","Family","Vacation","Pets","People","Celebration","Social","Entertainment","School","Exercise")
+
+hm_data <- hm_data[rowTotals > 0, ]
+hm_data$ldatopic <- as.vector(ldaOut.topics)
+hm_data$ldahash <- topics.hash[ldaOut.topics]
+colnames(topicProbabilities) <- topics.hash
+
+hm_data.df <- cbind(hm_data, topicProbabilities)
+```
+
+Some Visualization here:
+```{r topic2, warning=FALSE, message=FALSE}
+word_count_by_topic <- hm_data.df %>%
+  unnest_tokens(word, text) %>%
+  group_by(ldahash) %>%
+  count(word, sort = TRUE)
+
+word_count_by_topic %>% 
+  slice(1:10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n, color = ldahash)) + geom_col() +  facet_wrap(~ldahash, scales = "free") + xlab(NULL) + ylab("Word Frequency")+ coord_flip()
+```
+
+
+#### Step 4.3 - Heatmap Analysis
+
+We use heatmap to see the weight allocation of topics grouped by gender. Note that the red color indicates higher weights on that topic. Let's ignore "others" for now, and only focus on male and female.
+There is a clear trend in between:
+ - Female tend to mention "family", "vacation", and "friends".
+ - Male focus on "people", "entertainment", and "exercise".
+
+```{r heatmap1, warning=FALSE, message=FALSE}
+par(mar=c(1,1,1,1))
+topic.summary1=tbl_df(hm_data.df[!is.na(hm_data.df$gender),])%>%
+              select(gender, Work:Exercise)%>%
+              group_by(gender)%>%
+              summarise_each(funs(mean)) %>% 
+              as.data.frame()
+heatmap.2(as.matrix(topic.summary1[,-1]), Rowv = FALSE,
+           scale = "column", key=F, na.rm = T,
+           col = bluered(100), labRow = c("f","m","o"),
+           cexRow = 0.9, cexCol = 0.9, margins = c(8, 8),
+           trace = "none", density.info = "none")
+```
+
+We use heatmap to see the weight allocation of topics grouped by marital status. Different from previous analysis, the information coming from this heatmap may not make perfect sense, probably due to our selection of topics.
+For example, married people are the only group who focus on "people" and "entertainment" and they don't mention "friends" or "work".
+
+```{r heatmap2, warning=FALSE, message=FALSE}
+par(mar=c(1,1,1,1))
+topic.summary2=tbl_df(hm_data.df[!is.na(hm_data.df$marital),])%>%
+              select(marital, Work:Exercise)%>%
+              group_by(marital)%>%
+              summarise_each(funs(mean)) %>%
+              as.data.frame()
+heatmap.2(as.matrix(topic.summary2[,-1]), Rowv = FALSE,
+           scale = "column", key=F, na.rm = T, col = bluered(100), 
+          labRow = c("divorced","married","separated","single","widowed"),
+           cexRow = 0.9, cexCol = 0.9, margins = c(8, 8),
+           trace = "none", density.info = "none")
+
+```
+
+We use heatmap to see the weight allocation of topics grouped by reflection period. This heatmap prefectly illustrates the difference between the two groups. For short-term happy memories, people tend to say things about "pets", "entertainment", "celebration", and "exercise"; while for long-term happy memories, people often mentions things like their "people", "work", or "school".
+
+```{r heatmap3, warning=FALSE, message=FALSE}
+par(mar=c(1,1,1,1))
+topic.summary3=tbl_df(hm_data.df[!is.na(hm_data.df$reflection_period),])%>%
+              select(reflection_period, Work:Exercise)%>%
+              group_by(reflection_period)%>%
+              summarise_each(funs(mean)) %>%
+              as.data.frame()
+heatmap.2(as.matrix(topic.summary3[,-1]), Rowv = FALSE,
+           scale = "column", key=F, na.rm = T, col = bluered(100), 
+          labRow = c("24h","3m"),
+           cexRow = 0.9, cexCol = 0.9, margins = c(8, 8),
+           trace = "none", density.info = "none")
+
+```
+
+Again, similar to the marital status heatmap, the heatmap data on the top 10 countries with the most data entries does not provide much information either. I was expecting countries like "AUS", "GBR", and "USA" to behave similarly, but they tend to differ a little. I was also expecting asian countries like "PHL", "VNM" and "IND" to have similar colors as well.
+
+```{r heatmap4, warning=FALSE, message=FALSE}
+par(mar=c(1,1,1,1))
+topic.summary4=subset(hm_data.df, country %in% country.int) %>%
+              tbl_df()%>%
+              select(country, Work:Exercise)%>%
+              group_by(country)%>%
+              summarise_each(funs(mean)) %>%
+              as.data.frame()
+heatmap.2(as.matrix(topic.summary4[,-1]), Rowv = FALSE,
+           scale = "column", key=F, na.rm = T, col = bluered(100), 
+          labRow = country.int,
+           cexRow = 0.9, cexCol = 0.9, margins = c(8, 8),
+           trace = "none", density.info = "none")
+```
+
+
+#### Step 5 - Summary
+
+(1) Few NLP methods were used throughout my project, including sentiment analysis and topic modeling. And several analytics/visualization tools were used, including boxplot, wordcloud, and heatmap.
+(2) I first examined the relationship between predicted_cateory (given in the dataset) vs. other parameters. The main takeaways are:
+  - For both male and female, most frequent words are both "friend", "day" and "time".
+  - However, the difference is that for 24h data, words that tend to be memorized in a short term are   also very hot, such as "watched", "morning", "dinner"; while for 3m data, words that represent more significant events tend to show up more, such as "job", "home", and "birthday".
+(3) Sentiment value was also utilized to determine if different demographic groups behave differently. But the result shows that the difference (among gender, marital status, or age) is quite minor.
+(4) By using LDA method, a list of 10 topics was manually entered. This heatmap on reflection_period prefectly illustrates the difference between the two groups. For short-term happy memories, people tend to say things about "pets", "entertainment", "celebration", and "exercise"; while for long-term happy memories, people often mentions things like their "people", "work", or "school".
+  
